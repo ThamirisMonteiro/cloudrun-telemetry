@@ -23,7 +23,6 @@ func GetTemperature(location string) (string, error) {
 		log.Fatal("Erro ao carregar o arquivo .env")
 	}
 
-	// Pega a chave de API do ambiente
 	weatherAPIKey := os.Getenv("WEATHER_API_KEY")
 	if weatherAPIKey == "" {
 		log.Fatal("A chave de API não foi definida em WEATHER_API_KEY")
@@ -55,16 +54,17 @@ func GetTemperature(location string) (string, error) {
 	tempF = math.Round(tempF*10) / 10
 	tempK = math.Round(tempK*10) / 10
 
-	temperature := map[string]float64{
+	data := map[string]interface{}{
+		"city":   location,
 		"temp_C": tempC,
 		"temp_F": tempF,
 		"temp_K": tempK,
 	}
 
-	temperatureJSON, err := json.Marshal(temperature)
+	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return "", err
 	}
 
-	return string(temperatureJSON), nil
+	return string(dataJSON), nil
 }
