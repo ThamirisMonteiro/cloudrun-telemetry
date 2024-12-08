@@ -71,7 +71,7 @@ func validateCEP(cep string) bool {
 }
 
 func forwardToServiceB(cep string) ([]byte, int, error) {
-	url := "http://localhost:8082/" + cep
+	url := "http://service-b:8082/" + cep
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, 0, err

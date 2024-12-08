@@ -28,7 +28,7 @@ func GetTemperature(location string) (string, error) {
 		log.Fatal("A chave de API não foi definida em WEATHER_API_KEY")
 	}
 
-	url := fmt.Sprintf("https://api.weatherapi.com/v1/current.json?key=%s&q=%s", weatherAPIKey, location)
+	url := fmt.Sprintf("http://api.weatherapi.com/v1/current.json?key=%s&q=%s", weatherAPIKey, location)
 
 	resp, err := http.Get(url)
 	if err != nil {

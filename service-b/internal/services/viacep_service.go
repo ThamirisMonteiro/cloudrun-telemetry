@@ -13,7 +13,7 @@ type ViaCEPResponse struct {
 }
 
 func GetLocationFromCEP(cep string) (*ViaCEPResponse, error, int) {
-	url := "https://viacep.com.br/ws/" + cep + "/json/"
+	url := "http://viacep.com.br/ws/" + cep + "/json/"
 
 	resp, err := http.Get(url)
 	if err != nil {
