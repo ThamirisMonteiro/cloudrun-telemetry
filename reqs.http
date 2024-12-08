@@ -1,6 +1,0 @@
-POST localhost:8081
-Content-Type: application/json
-
-{
-  "cep": "80035050"
-}
