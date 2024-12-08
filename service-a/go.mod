@@ -1,6 +1,8 @@
 module lab-cloud-run
 
-go 1.20
+go 1.22
+
+toolchain go1.22.10
 
 require (
 	go.opentelemetry.io/otel v1.32.0

@@ -78,18 +78,19 @@ func cepHandler(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	cep := r.URL.Path[1:]
+
 	if err := validateCEP(cep); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 
-	location, err := getLocation(ctx, cep)
+	location, err, status := getLocationFromCEP(ctx, cep)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), status)
 		return
 	}
 
-	temp, err := getTemperature(ctx, location)
+	temp, err := getTemperature(ctx, location.Localidade)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -108,12 +109,35 @@ func validateCEP(cep string) error {
 	return nil
 }
 
-func getLocation(ctx context.Context, cep string) (string, error) {
+func getLocationFromCEP(ctx context.Context, cep string) (*ViaCEPResponse, error, int) {
 	tracer := otel.GetTracerProvider().Tracer("service-b")
 	_, span := tracer.Start(ctx, "getLocation")
 	defer span.End()
 
-	return "São Paulo", nil
+	url := "http://viacep.com.br/ws/" + cep + "/json/"
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err, http.StatusInternalServerError
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil, err, http.StatusInternalServerError
+	}
+
+	var response ViaCEPResponse
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		return nil, err, http.StatusInternalServerError
+	}
+
+	if response.Localidade == "" {
+		return nil, errors.New("invalid zipcode"), http.StatusNotFound
+	}
+
+	return &response, nil, http.StatusOK
 }
 
 func getTemperature(ctx context.Context, location string) (string, error) {
@@ -135,19 +159,23 @@ func getTemperature(ctx context.Context, location string) (string, error) {
 
 	resp, err := http.Get(url)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error fetching weather data: %v", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("received non-OK status code %d from weather API", resp.StatusCode)
+	}
+
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error reading weather response body: %v", err)
 	}
 
 	var response WeatherAPIResponse
 	err = json.Unmarshal(body, &response)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error unmarshalling weather response: %v", err)
 	}
 
 	tempF := response.Current.TempC*1.8 + 32
@@ -166,7 +194,7 @@ func getTemperature(ctx context.Context, location string) (string, error) {
 
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error marshalling temperature data: %v", err)
 	}
 
 	return string(dataJSON), nil

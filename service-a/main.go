@@ -80,8 +80,14 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CEP string `json:"cep"`
 	}
+
 	err = json.Unmarshal(body, &req)
-	if err != nil || !validateCEP(req.CEP) {
+	if err != nil {
+		http.Error(w, `{"message": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if !validateCEP(req.CEP) {
 		http.Error(w, `{"message": "invalid zipcode"}`, http.StatusUnprocessableEntity)
 		return
 	}
@@ -109,6 +115,7 @@ func forwardToServiceB(ctx context.Context, cep string) ([]byte, int, error) {
 	url := "http://service-b:8082/" + cep
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	resp, err := http.DefaultClient.Do(req)
+
 	if err != nil {
 		return nil, 0, err
 	}
