@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/cloudrun-telemetry.iml" filepath="$PROJECT_DIR$/.idea/cloudrun-telemetry.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/observability-telemetry.iml" filepath="$PROJECT_DIR$/.idea/observability-telemetry.iml" />
     </modules>
   </component>
 </project>
