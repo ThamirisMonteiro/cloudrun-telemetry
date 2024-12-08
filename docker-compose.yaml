@@ -7,8 +7,10 @@ services:
       - "8081:8081"
     environment:
       - PORT=8081
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://zipkin:9411/api/v2/spans
     depends_on:
       - service-b
+      - zipkin
 
   service-b:
     build:
@@ -18,3 +20,11 @@ services:
       - "8082:8082"
     environment:
       - PORT=8082
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://zipkin:9411/api/v2/spans
+    depends_on:
+      - zipkin
+
+  zipkin:
+    image: openzipkin/zipkin:latest
+    ports:
+      - "9411:9411"
