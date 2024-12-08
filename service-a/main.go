@@ -5,55 +5,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/zipkin"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"regexp"
-	"time"
 )
 
-func initProvider(serviceName, collectorURL string) (func(ctx context.Context) error, error) {
-	ctx := context.Background()
-
-	res, err := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(serviceName)))
+func initTracer(serviceName, zipkinURL string) (func(ctx context.Context) error, error) {
+	exporter, err := zipkin.New(zipkinURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create resource: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	conn, err := grpc.DialContext(ctx, collectorURL, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to collector: %w", err)
-	}
-	traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
+		return nil, fmt.Errorf("failed to create Zipkin exporter: %w", err)
 	}
 
-	bsp := sdktrace.NewBatchSpanProcessor(traceExporter)
-	tracerProvider := sdktrace.NewTracerProvider(
+	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithResource(res),
-		sdktrace.WithSpanProcessor(bsp))
-	otel.SetTracerProvider(tracerProvider)
+		sdktrace.WithResource(resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceNameKey.String(serviceName))),
+		sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(exporter)),
+	)
+
+	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
-	return tracerProvider.Shutdown, nil
-}
-
-type CEPRequest struct {
-	CEP string `json:"cep"`
+	return tp.Shutdown, nil
 }
 
 func main() {
+	zipkinURL := os.Getenv("ZIPKIN_URL")
+	if zipkinURL == "" {
+		zipkinURL = "http://zipkin:9411/api/v2/spans"
+	}
+
+	shutdown, err := initTracer("service-a", zipkinURL)
+	if err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+
 	http.HandleFunc("/", CEPHandler)
 
 	port := os.Getenv("PORT")
@@ -62,13 +55,14 @@ func main() {
 	}
 
 	log.Printf("Starting server on port %s...", port)
-	err := http.ListenAndServe(":"+port, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func CEPHandler(w http.ResponseWriter, r *http.Request) {
+	tracer := otel.GetTracerProvider().Tracer("service-a")
+	ctx, span := tracer.Start(r.Context(), "CEPHandler")
+	defer span.End()
+
 	w.Header().Set("Content-Type", "application/json")
 
 	if r.Method != http.MethodPost {
@@ -76,26 +70,23 @@ func CEPHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"message": "failed to read request body"}`, http.StatusInternalServerError)
 		return
 	}
 	defer r.Body.Close()
 
-	var req CEPRequest
+	var req struct {
+		CEP string `json:"cep"`
+	}
 	err = json.Unmarshal(body, &req)
-	if err != nil {
+	if err != nil || !validateCEP(req.CEP) {
 		http.Error(w, `{"message": "invalid zipcode"}`, http.StatusUnprocessableEntity)
 		return
 	}
 
-	if !validateCEP(req.CEP) {
-		http.Error(w, `{"message": "invalid zipcode"}`, http.StatusUnprocessableEntity)
-		return
-	}
-
-	respBody, status, err := forwardToServiceB(req.CEP)
+	respBody, status, err := forwardToServiceB(ctx, req.CEP)
 	if err != nil {
 		http.Error(w, `{"message": "failed to contact service B"}`, http.StatusInternalServerError)
 		return
@@ -110,18 +101,23 @@ func validateCEP(cep string) bool {
 	return match
 }
 
-func forwardToServiceB(cep string) ([]byte, int, error) {
+func forwardToServiceB(ctx context.Context, cep string) ([]byte, int, error) {
+	tracer := otel.GetTracerProvider().Tracer("service-a")
+	ctx, span := tracer.Start(ctx, "forwardToServiceB")
+	defer span.End()
+
 	url := "http://service-b:8082/" + cep
-	resp, err := http.Get(url)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	return respBody, resp.StatusCode, nil
+	return body, resp.StatusCode, nil
 }
